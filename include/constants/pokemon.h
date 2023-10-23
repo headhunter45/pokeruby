@@ -91,8 +91,16 @@
 #define MON_DATA_SPATK2            87
 #define MON_DATA_SPDEF2            88
 
+// Shiny odds
+#define SHINY_ODDS 8 // Actual probability is SHINY_ODDS/65536
+#define GET_SHINY_VALUE(otId, personality) (HIHALF(otId) ^ LOHALF(otId) ^ HIHALF(personality) ^ LOHALF(personality))
+
 #define MIN_LEVEL 1
 #define MAX_LEVEL 100
+
+#define OT_ID_PLAYER_ID       0
+#define OT_ID_PRESET          1
+#define OT_ID_RANDOM_NO_SHINY 2
 
 #define MON_MALE       0x00
 #define MON_FEMALE     0xFE

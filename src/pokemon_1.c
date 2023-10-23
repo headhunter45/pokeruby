@@ -1379,6 +1379,7 @@ void CreateBoxMon(struct BoxPokemon *boxMon, u16 species, u8 level, u8 fixedIV, 
     u32 personality;
     u32 value;
     u16 checksum;
+	u32 shinyValue;
 
     ZeroBoxMonData(boxMon);
 
@@ -1387,12 +1388,9 @@ void CreateBoxMon(struct BoxPokemon *boxMon, u16 species, u8 level, u8 fixedIV, 
     else
         personality = Random32();
 
-    SetBoxMonData(boxMon, MON_DATA_PERSONALITY, &personality);
-
     //Determine original trainer ID
     if (otIdType == 2) //Pokemon cannot be shiny
     {
-        u32 shinyValue;
         do
         {
             value = Random32();
@@ -1409,8 +1407,14 @@ void CreateBoxMon(struct BoxPokemon *boxMon, u16 species, u8 level, u8 fixedIV, 
               | (gSaveBlock2.playerTrainerId[1] << 8)
               | (gSaveBlock2.playerTrainerId[2] << 16)
               | (gSaveBlock2.playerTrainerId[3] << 24);
-    }
+		// Re-roll personality until the pokemon is shiny.
+		while (!hasFixedPersonality && shinyValue >= 8) {
+			personality = Random32();
+			shinyValue = HIHALF(value) ^ LOHALF(value) ^ HIHALF(personality) ^ LOHALF(personality);
+		}
+	}
 
+    SetBoxMonData(boxMon, MON_DATA_PERSONALITY, &personality);
     SetBoxMonData(boxMon, MON_DATA_OT_ID, &value);
 
     checksum = CalculateBoxMonChecksum(boxMon);
@@ -1474,41 +1478,93 @@ void CreateBoxMon(struct BoxPokemon *boxMon, u16 species, u8 level, u8 fixedIV, 
 void CreateMonWithNature(struct Pokemon *mon, u16 species, u8 level, u8 fixedIV, u8 nature)
 {
     u32 personality;
+    u32 playerOtId = gSaveBlock2.playerTrainerId[0]
+              | (gSaveBlock2.playerTrainerId[1] << 8)
+              | (gSaveBlock2.playerTrainerId[2] << 16)
+              | (gSaveBlock2.playerTrainerId[3] << 24);
+    u32 shinyValue;
 
+    // TODO: This may be dangerous it needs to be tested and made to give up if the pokemon can't be shiny with this nature.
     do
     {
         personality = Random32();
+        shinyValue = GET_SHINY_VALUE(playerOtId, personality);
     }
-    while (nature != GetNatureFromPersonality(personality));
+    while (nature != GetNatureFromPersonality(personality)
+        || shinyValue >= SHINY_ODDS);
 
-    CreateMon(mon, species, level, fixedIV, 1, personality, 0, 0);
+    CreateMon(mon, species, level, fixedIV, 1, personality, OT_ID_PLAYER_ID, 0);
+}
+
+
+static u32 GenerateUnownPersonalityByLetter(u8 letter, u32 otId)
+{
+    u32 personality;
+    u32 shinyValue;
+    if ((u8)(letter - 1) < UNOWN_FORM_COUNT) {
+        u16 actualLetter;
+        do
+        {
+            personality = Random32();
+            actualLetter = GET_UNOWN_LETTER(personality);
+            shinyValue = GET_SHINY_VALUE(otId, personality);
+            // TODO: Test this and maybe limit the number of rerolls.
+        }
+        while (actualLetter != letter - 1 || shinyValue <= SHINY_ODDS);
+    } else {
+        do
+        {
+            personality = Random32();
+            shinyValue = GET_SHINY_VALUE(otId, personality);
+        }
+        while (shinyValue >= SHINY_ODDS);
+    }
+}
+
+void CreateMonWithLetter(struct Pokemon *mon, u16 species, u8 level, u8 fixedIV, u8 unownLetter) {
+    u32 playerOtId = gSaveBlock2.playerTrainerId[0]
+                   | (gSaveBlock2.playerTrainerId[1] << 8)
+                   | (gSaveBlock2.playerTrainerId[2] << 16)
+                   | (gSaveBlock2.playerTrainerId[3] << 24);
+    u32 personality = GenerateUnownPersonalityByLetter(unownLetter, playerOtId);
+    CreateMon(mon, species, level, fixedIV, TRUE, personality, OT_ID_PLAYER_ID, 0);
 }
 
 void CreateMonWithGenderNatureLetter(struct Pokemon *mon, u16 species, u8 level, u8 fixedIV, u8 gender, u8 nature, u8 unownLetter)
 {
     u32 personality;
+    u32 playerOtId = gSaveBlock2.playerTrainerId[0]
+                   | (gSaveBlock2.playerTrainerId[1] << 8)
+                   | (gSaveBlock2.playerTrainerId[2] << 16)
+                   | (gSaveBlock2.playerTrainerId[3] << 24);
+	u32 shinyValue;
 
-    if ((u8)(unownLetter - 1) < 28)
+    if ((u8)(unownLetter - 1) < UNOWN_FORM_COUNT)
     {
         u16 actualLetter;
 
         do
         {
             personality = Random32();
-            actualLetter = ((((personality & 0x3000000) >> 18) | ((personality & 0x30000) >> 12) | ((personality & 0x300) >> 6) | (personality & 0x3)) % 28);
+            actualLetter = ((((personality & 0x3000000) >> 18) | ((personality & 0x30000) >> 12) | ((personality & 0x300) >> 6) | (personality & 0x3)) % UNOWN_FORM_COUNT);
+            shinyValue = GET_SHINY_VALUE(playerOtId, personality);
         }
+        // TODO: Test this and maybe limit the number of rerolls.
         while (nature != GetNatureFromPersonality(personality)
             || gender != GetGenderFromSpeciesAndPersonality(species, personality)
-            || actualLetter != unownLetter - 1);
+            || actualLetter != unownLetter - 1
+            || shinyValue <= SHINY_ODDS);
     }
     else
     {
         do
         {
             personality = Random32();
+            shinyValue = GET_SHINY_VALUE(playerOtId, personality);
         }
         while (nature != GetNatureFromPersonality(personality)
-            || gender != GetGenderFromSpeciesAndPersonality(species, personality));
+            || gender != GetGenderFromSpeciesAndPersonality(species, personality)
+            || shinyValue >= SHINY_ODDS);
     }
 
     CreateMon(mon, species, level, fixedIV, 1, personality, 0, 0);
@@ -1519,13 +1575,16 @@ void CreateMaleMon(struct Pokemon *mon, u16 species, u8 level)
 {
     u32 personality;
     u32 otId;
+	u32 shinyValue;
 
     do
     {
         otId = Random32();
         personality = Random32();
+		shinyValue = GET_SHINY_VALUE(otId, personality);
     }
-    while (GetGenderFromSpeciesAndPersonality(species, personality) != MON_MALE);
+    while (GetGenderFromSpeciesAndPersonality(species, personality) != MON_MALE
+        || shinyValue >= SHINY_ODDS);
     CreateMon(mon, species, level, 32, 1, personality, 1, otId);
 }
 
